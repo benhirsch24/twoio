@@ -37,11 +37,11 @@ impl<T: Clone> Future for RecvFuture<T> {
     fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
         let me = self.as_ref();
 
-        if *self.inner.closed.borrow() && self.inner.data.borrow().len() == 0 {
+        if *self.inner.closed.borrow() && self.inner.data.borrow().is_empty() {
             return Poll::Ready(None);
         }
 
-        if me.inner.data.borrow().len() == 0 {
+        if me.inner.data.borrow().is_empty() {
             return Poll::Pending;
         }
 

@@ -16,7 +16,7 @@ fn main() -> anyhow::Result<()> {
 
     executor::spawn({
         async {
-            let mut wg = WaitGroup::new();
+            let mut wg = WaitGroup::default();
             let g1 = wg.add();
 
             executor::spawn({

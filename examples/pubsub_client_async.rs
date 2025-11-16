@@ -99,10 +99,6 @@ impl SubscriberStats {
         let mut counts = self.received.borrow_mut();
         *counts.entry(subscriber.to_string()).or_insert(0) += 1;
     }
-
-    fn total(&self) -> u64 {
-        self.received.borrow().values().sum()
-    }
 }
 
 impl std::fmt::Display for Stats {
@@ -321,17 +317,6 @@ fn main() -> anyhow::Result<()> {
     let stats = Stats::new();
     let subscriber_stats = SubscriberStats::new();
     executor::spawn({
-        let subscriber_stats = subscriber_stats.clone();
-        let log_deadline = end + Duration::from_millis(25);
-        async move {
-            let now = Instant::now();
-            if log_deadline > now {
-                let _ = Timeout::new(log_deadline - now, false).await;
-            }
-        }
-    });
-
-    executor::spawn({
         let stats = stats.clone();
         let stats_path = args.stats_output.clone();
         async move {
@@ -351,7 +336,7 @@ fn main() -> anyhow::Result<()> {
     );
 
     let mut rng = rand::rng();
-    let mut wg = WaitGroup::new();
+    let mut wg = WaitGroup::default();
     for n in 0..args.publishers {
         let channel_name = format!("Channel_{n}");
         // Add some jitter here for ramp up

@@ -6,9 +6,6 @@ use std::task::{Context, Poll, Waker};
 use futures::future::{FutureExt, LocalBoxFuture};
 use log::{trace, warn};
 
-#[cfg(test)]
-use std::rc::Rc;
-
 use crate::uring;
 
 struct ExecutorInner<'a> {
@@ -94,7 +91,7 @@ impl ExecutorInner<'_> {
         loop {
             trace!("Ready queue n={n}");
             n += 1;
-            if self.ready_queue.len() == 0 {
+            if self.ready_queue.is_empty() {
                 trace!("No more ready queue");
                 return;
             }

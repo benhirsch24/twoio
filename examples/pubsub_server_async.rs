@@ -240,13 +240,13 @@ async fn handle_publisher(
                         Err(mpsc::SendError::Full) => unreachable!("Channel is unbounded"),
                     }
                 }
-                if delivered > 0 {
-                    if let Some(channel_id) = subscribers.channel_id(&channel) {
-                        let _ = stats_tx.send(StatEvent::MessagesSent {
-                            channel_id,
-                            count: delivered,
-                        });
-                    }
+                if delivered > 0
+                    && let Some(channel_id) = subscribers.channel_id(&channel)
+                {
+                    let _ = stats_tx.send(StatEvent::MessagesSent {
+                        channel_id,
+                        count: delivered,
+                    });
                 }
             }
             Err(e) => {
