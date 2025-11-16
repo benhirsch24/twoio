@@ -174,7 +174,7 @@ impl ExecutorInner<'_> {
     fn spawn(&mut self, fut: impl Future<Output = ()> + 'static) {
         let cur_task = get_task_id();
         let task_id = self.get_next_task_id();
-        self.tasks.insert(task_id, fut.fuse().boxed_local());
+        self.tasks.insert(task_id, fut.boxed_local());
         self.ready_queue.push(task_id);
         trace!(
             "Spawning new task task_id={task_id} cur_task={cur_task} rq={}",
@@ -281,60 +281,8 @@ pub fn run() {
 }
 
 #[cfg(test)]
-#[derive(Clone)]
-struct Executor {
-    inner: Rc<UnsafeCell<ExecutorInner>>,
-}
-
-#[cfg(test)]
-impl Executor {
-    pub fn new() -> Self {
-        // If uring was already initialized this will be a no-op
-        uring::init(uring::UringArgs::default()).expect("uring init!");
-        Self {
-            inner: Rc::new(UnsafeCell::new(ExecutorInner::new())),
-        }
-    }
-
-    fn handle_completion(&mut self, op: u64, res: i32, flags: u32) -> Result<(), anyhow::Error> {
-        unsafe {
-            let inner = &mut *self.inner.get();
-            inner.handle_completion(op, res, flags)
-        }
-    }
-
-    fn spawn(&mut self, fut: impl Future<Output = ()> + 'static) {
-        unsafe {
-            let inner = &mut *self.inner.get();
-            inner.spawn(Box::pin(fut));
-        }
-    }
-
-    fn schedule_completion(&mut self, op: u64, is_multi: bool) {
-        unsafe {
-            let inner = &mut *self.inner.get();
-            inner.schedule_completion(op, is_multi);
-        }
-    }
-
-    fn get_result(&self, op: u64) -> Option<i32> {
-        unsafe {
-            let inner = &mut *self.inner.get();
-            inner.get_result(op)
-        }
-    }
-
-    pub fn run(&mut self) {
-        unsafe {
-            let inner = &mut *self.inner.get();
-            inner.run()
-        }
-    }
-}
-
-#[cfg(test)]
 mod tests {
-    use super::Executor;
+    use crate::executor;
     use std::cell::RefCell;
     use std::future::Future;
     use std::pin::Pin;
@@ -343,7 +291,6 @@ mod tests {
 
     struct ExampleFuture {
         id: u64,
-        executor: Executor,
     }
 
     impl Future for ExampleFuture {
@@ -351,7 +298,7 @@ mod tests {
 
         fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
             let me = self.as_ref();
-            match me.executor.get_result(me.id) {
+            match executor::get_result(me.id) {
                 Some(res) => {
                     println!("Got result {res}");
                     Poll::Ready(())
@@ -366,30 +313,31 @@ mod tests {
 
     #[test]
     fn test1() {
-        let mut executor = Executor::new();
+        executor::init();
         let res = Rc::new(RefCell::new(false));
         let f = {
-            let mut executor = executor.clone();
             let res = res.clone();
             async move {
                 let example_future_op = 7;
-                let fut = Box::pin(ExampleFuture {
+                let fut = ExampleFuture {
                     id: example_future_op,
-                    executor: executor.clone(),
-                });
-                executor.schedule_completion(example_future_op, false);
+                };
+                executor::schedule_completion(example_future_op, false);
                 fut.await;
                 *res.borrow_mut() = true;
             }
         };
         let id: u64 = 5;
-        executor.spawn(f);
-        executor.schedule_completion(id, false);
-        executor.handle_completion(5, 0, 0).expect("No error");
-        if executor.handle_completion(6, 0, 0).is_ok() {
+        executor::spawn(f);
+        executor::schedule_completion(id, false);
+        executor::handle_ready_queue();
+        executor::handle_completion(5, 0, 0).expect("No error");
+        if executor::handle_completion(6, 0, 0).is_ok() {
             panic!("No scheduled completion 6");
         }
-        executor.handle_completion(7, 0, 0).expect("No error");
+        executor::handle_ready_queue();
+        executor::handle_completion(7, 0, 0).expect("No error");
+        executor::handle_ready_queue();
         if !*res.borrow() {
             panic!("res should be true");
         }

@@ -1,5 +1,5 @@
 [package]
-name = "iouring_bench"
+name = "twoio"
 version = "0.1.0"
 edition = "2024"
 

@@ -13,8 +13,8 @@ use connection::*;
 mod pubsub;
 use pubsub::BufferPool;
 
-use iouring_bench::uring;
-use iouring_bench::user_data::{Op, UserData};
+use twoio::uring;
+use twoio::user_data::{Op, UserData};
 
 const SILLY_TEXT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),

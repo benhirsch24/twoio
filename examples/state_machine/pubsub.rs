@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::os::fd::RawFd;
 use std::rc::Rc;
 
-use iouring_bench::user_data::{Op, UserData};
+use twoio::user_data::{Op, UserData};
 
 use bytes::Bytes;
 use io_uring::{opcode, squeue::Entry, types};

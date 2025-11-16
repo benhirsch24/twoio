@@ -1,6 +1,6 @@
-use iouring_bench::executor;
-use iouring_bench::sync::mpsc::*;
-use iouring_bench::uring;
+use twoio::executor;
+use twoio::sync::mpsc::*;
+use twoio::uring;
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();

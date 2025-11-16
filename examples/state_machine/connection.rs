@@ -7,8 +7,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use iouring_bench::uring;
-use iouring_bench::user_data::{Op, UserData};
+use twoio::uring;
+use twoio::user_data::{Op, UserData};
 
 use crate::pubsub::{Buffer, BufferPool, PubsubState};
 

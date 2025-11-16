@@ -606,33 +606,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "iouring_bench"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "clap",
- "clap-duration",
- "duration-human",
- "env_logger",
- "futures",
- "futures-lite 2.6.1",
- "glommio",
- "histogram",
- "httparse",
- "io-uring",
- "libc",
- "log",
- "net2",
- "os_socketaddr",
- "rand",
- "slab",
- "socket2 0.6.1",
- "thiserror 2.0.17",
- "tokio",
-]
-
-[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1274,6 +1247,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9d12581f227e93f094d3af2ae690a574abb8a2b9b7a96e7cfe9647b2b617678"
 dependencies = [
  "once_cell",
+]
+
+[[package]]
+name = "twoio"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "clap-duration",
+ "duration-human",
+ "env_logger",
+ "futures",
+ "futures-lite 2.6.1",
+ "glommio",
+ "histogram",
+ "httparse",
+ "io-uring",
+ "libc",
+ "log",
+ "net2",
+ "os_socketaddr",
+ "rand",
+ "slab",
+ "socket2 0.6.1",
+ "thiserror 2.0.17",
+ "tokio",
 ]
 
 [[package]]

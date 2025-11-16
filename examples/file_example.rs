@@ -6,9 +6,9 @@ use clap::Parser;
 use futures::io::{AsyncReadExt, AsyncWriteExt};
 use log::{error, info};
 
-use iouring_bench::executor;
-use iouring_bench::file::File;
-use iouring_bench::uring;
+use twoio::executor;
+use twoio::file::File;
+use twoio::uring;
 
 #[derive(Parser, Debug)]
 #[command(

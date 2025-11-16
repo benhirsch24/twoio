@@ -1,8 +1,8 @@
 use log::info;
 
-use iouring_bench::executor;
-use iouring_bench::sync::wg::WaitGroup;
-use iouring_bench::uring;
+use twoio::executor;
+use twoio::sync::wg::WaitGroup;
+use twoio::uring;
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();

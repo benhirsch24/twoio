@@ -12,7 +12,7 @@ use std::net::TcpStream;
 use std::os::fd::{AsRawFd, RawFd};
 use std::rc::Rc;
 
-use iouring_bench::uring;
+use twoio::uring;
 
 struct CallbackRegistry {
     map: HashMap<u64, Box<dyn FnOnce(i32) -> anyhow::Result<()>>>,
