@@ -402,7 +402,7 @@ fn main() -> anyhow::Result<()> {
         }
     });
 
-    executor::spawn(async move {
+    executor::block_on(async move {
         let mut listener = unet::TcpListener::bind("0.0.0.0:8080").unwrap();
         loop {
             debug!("Accepting");
@@ -453,8 +453,6 @@ fn main() -> anyhow::Result<()> {
             });
         }
     });
-
-    executor::run();
 
     Ok(())
 }

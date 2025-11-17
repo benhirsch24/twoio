@@ -1,6 +1,7 @@
-use std::cell::{Cell, UnsafeCell};
+use std::cell::{Cell, RefCell, UnsafeCell};
 use std::collections::HashMap;
 use std::future::Future;
+use std::rc::Rc;
 use std::task::{Context, Poll, Waker};
 
 use futures::future::{FutureExt, LocalBoxFuture};
@@ -275,6 +276,24 @@ pub fn run() {
         let exe = &mut *exe.get();
         exe.as_mut().unwrap().run()
     })
+}
+
+pub fn block_on<T: 'static>(fut: impl Future<Output = T> + 'static) -> T {
+    let result: Rc<RefCell<Option<T>>> = Rc::new(RefCell::new(None));
+    let result_ref = result.clone();
+
+    spawn(async move {
+        let output = fut.await;
+        *result_ref.borrow_mut() = Some(output);
+        uring::exit();
+    });
+
+    run();
+
+    result
+        .borrow_mut()
+        .take()
+        .expect("block_on finished without producing a result")
 }
 
 #[cfg(test)]

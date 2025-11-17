@@ -91,7 +91,7 @@ fn main() -> anyhow::Result<()> {
     })?;
     executor::init();
 
-    executor::spawn({
+    executor::block_on({
         let input = args.input.clone();
         let output = args.output.clone();
         async move {
@@ -99,11 +99,8 @@ fn main() -> anyhow::Result<()> {
                 Ok(_) => info!("Copy complete"),
                 Err(e) => error!("copy failed: {e:?}"),
             }
-            uring::exit();
         }
     });
-
-    executor::run();
 
     Ok(())
 }
