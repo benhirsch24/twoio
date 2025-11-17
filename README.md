@@ -2,6 +2,10 @@
 
 Personal project to learn about `io_uring` and writing an async runtime in Rust. Two because iouring has two queues, io because io. Also I know that there's [monoio](https://docs.rs/monoio/latest/monoio/) which is an actual thing that is useful, this is not.
 
+Read more about it at my blog:
+
+[If I can write an async runtime in Rust, you can write an async runtime](https://benhirsch24.github.io/posts/2025-11-15-if-i-can-write-an-async-runtime-you-can-write-an-async-runtime.html#basic-runtime-around-io-uring)
+
 ## How to use
 
 First initialize `io_uring` with the `uring` crate. Then initialize the `executor` and spawn tasks, block on them, and proliferate.
