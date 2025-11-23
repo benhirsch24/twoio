@@ -10,7 +10,6 @@ use std::{cell::RefCell, rc::Rc};
 use twoio::executor;
 use twoio::net as unet;
 use twoio::sync::mpsc;
-use twoio::timeout::TimeoutFuture as Timeout;
 use twoio::uring;
 
 static OK: &[u8] = b"OK\r\n";
@@ -377,7 +376,7 @@ fn main() -> anyhow::Result<()> {
     executor::spawn({
         let stats_map = stats_map.clone();
         async move {
-            let mut timeout = Timeout::new(Duration::from_secs(5), true);
+            let mut timeout = twoio::timeout::ticker(Duration::from_secs(5));
             loop {
                 timeout = timeout.await.expect("REASON");
                 let stats = uring::stats().expect("stats");

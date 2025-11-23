@@ -15,8 +15,16 @@ pub struct TimeoutFuture {
     done: bool,
 }
 
+pub fn sleep_for(dur: Duration) -> TimeoutFuture {
+    TimeoutFuture::new(dur, false)
+}
+
+pub fn ticker(dur: Duration) -> TimeoutFuture {
+    TimeoutFuture::new(dur, true)
+}
+
 impl TimeoutFuture {
-    pub fn new(dur: Duration, repeated: bool) -> Self {
+    fn new(dur: Duration, repeated: bool) -> Self {
         let ts = types::Timespec::new()
             .sec(dur.as_secs())
             .nsec(dur.subsec_nanos());

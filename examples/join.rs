@@ -14,7 +14,7 @@ fn main() -> anyhow::Result<()> {
     let mut handles = Vec::new();
     for i in 0..5 {
         handles.push(executor::spawn(async move {
-            twoio::timeout::TimeoutFuture::new(std::time::Duration::from_secs(i), false).await;
+            let _ = twoio::timeout::sleep_for(std::time::Duration::from_secs(i)).await;
             println!("{i}");
             i
         }));

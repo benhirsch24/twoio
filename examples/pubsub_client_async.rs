@@ -17,7 +17,7 @@ use twoio::executor;
 use twoio::file::File;
 use twoio::net as unet;
 use twoio::sync::wg::WaitGroup;
-use twoio::timeout::TimeoutFuture as Timeout;
+use twoio::timeout::{sleep_for, ticker};
 use twoio::uring;
 
 #[derive(Parser, Debug)]
@@ -138,7 +138,7 @@ async fn persist_total_messages_jsonl(stats: Stats, path: PathBuf, end: Instant)
         } else {
             remaining
         };
-        Timeout::new(wait, false).await?;
+        sleep_for(wait).await?;
         let total = stats.total_writes();
         let timestamp_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -227,7 +227,7 @@ impl Publisher {
             let next_target = start_time + interval * n;
             let now = Instant::now();
             if next_target > now {
-                Timeout::new(next_target - now, false).await?;
+                sleep_for(next_target - now).await?;
             } else {
                 // We're running behind - log a warning if needed
                 trace!("Running behind schedule by {:?}", now - next_target);
@@ -305,7 +305,7 @@ fn main() -> anyhow::Result<()> {
     let end = args.timeout + start;
 
     executor::spawn(async {
-        let mut timeout = Timeout::new(Duration::from_secs(5), true);
+        let mut timeout = ticker(Duration::from_secs(5));
         loop {
             timeout = timeout.await.expect("REASON");
             let stats = uring::stats().expect("stats");
