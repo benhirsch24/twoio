@@ -234,7 +234,10 @@ pub fn spawn<T: 'static>(fut: impl Future<Output = T> + 'static) -> JoinHandle<T
         let exe = &mut *exe.get();
         let ret = Rc::new(RefCell::new(None));
         let task_id = Rc::new(Cell::new(None));
-        let jh = JoinHandle { ret: ret.clone(), task_id: task_id.clone() };
+        let jh = JoinHandle {
+            ret: ret.clone(),
+            task_id: task_id.clone(),
+        };
         exe.as_mut().unwrap().spawn(async move {
             let t = fut.await;
             *ret.borrow_mut() = Some(t);
