@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::collections::HashMap;
 use std::future::Future;
+use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll, Waker};
 
@@ -192,6 +193,26 @@ impl ExecutorInner<'_> {
     }
 }
 
+pub struct JoinHandle<T> {
+    ret: Rc<RefCell<Option<T>>>,
+    task_id: Rc<Cell<Option<u64>>>,
+}
+
+impl<T> Future for JoinHandle<T> {
+    type Output = T;
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let me = self.as_ref();
+        schedule_completion(get_next_op_id(), false);
+        me.task_id.set(Some(get_task_id()));
+        let mut r = me.ret.borrow_mut();
+        if r.is_none() {
+            return Poll::Pending;
+        }
+        let t = r.take().unwrap();
+        Poll::Ready(t)
+    }
+}
+
 thread_local! {
     static EXECUTOR: UnsafeCell<Option<ExecutorInner>> = const { UnsafeCell::new(None) };
 }
@@ -208,10 +229,20 @@ pub fn init() {
     })
 }
 
-pub fn spawn(fut: impl Future<Output = ()> + 'static) {
+pub fn spawn<T: 'static>(fut: impl Future<Output = T> + 'static) -> JoinHandle<T> {
     EXECUTOR.with(|exe| unsafe {
         let exe = &mut *exe.get();
-        exe.as_mut().unwrap().spawn(fut);
+        let ret = Rc::new(RefCell::new(None));
+        let task_id = Rc::new(Cell::new(None));
+        let jh = JoinHandle { ret: ret.clone(), task_id: task_id.clone() };
+        exe.as_mut().unwrap().spawn(async move {
+            let t = fut.await;
+            *ret.borrow_mut() = Some(t);
+            if let Some(tid) = task_id.get() {
+                wake(tid);
+            }
+        });
+        jh
     })
 }
 
