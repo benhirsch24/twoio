@@ -14,6 +14,7 @@ use twoio::timeout::sleep_for;
 use twoio::uring;
 
 static OK: &[u8] = b"OK\r\n";
+const SUBSCRIBER_PACING_BYTES_PER_SEC: u32 = 2 * 1024 * 1024 / 8; // ~2 Mbps
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -29,6 +30,10 @@ struct Args {
     /// Interval for kernel submission queue polling. If 0 then sqpoll is disabled. Default 0.
     #[arg(short = 'i', long, default_value_t = 0)]
     sqpoll_interval_ms: u32,
+
+    /// Enable per-subscriber pacing (~2 Mbps)
+    #[arg(long, default_value_t = false)]
+    enable_pacing: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -265,14 +270,17 @@ async fn handle_subscriber(
     channel: String,
     subscribers: Subscribers,
     mut stats_tx: mpsc::Sender<StatEvent>,
+    pacing_rate: Option<u32>,
 ) {
-    debug!(
-        "Handling subscriber channel={channel} fd={}",
-        writer.as_raw_fd()
-    );
+    let subscriber_fd = writer.as_raw_fd();
+    debug!("Handling subscriber channel={channel} fd={subscriber_fd}");
+    if let Some(rate) = pacing_rate {
+        if let Err(e) = writer.set_pacing_rate(rate) {
+            warn!("Failed to set pacing for subscriber fd={subscriber_fd}: {e}");
+        }
+    }
     writer.write_all(OK).await.expect("OK");
 
-    let subscriber_fd = writer.as_raw_fd();
     let (rx_inner, tx) = mpsc::channel::<Rc<String>>();
     let rx = Rc::new(RefCell::new(rx_inner));
     if let Some(channel_id) = subscribers.add_subscriber(&channel, subscriber_fd, tx) {
@@ -407,11 +415,17 @@ fn main() -> anyhow::Result<()> {
 
     executor::block_on(async move {
         let mut listener = unet::TcpListener::bind("0.0.0.0:8080").unwrap();
+        let pacing_rate = if args.enable_pacing {
+            Some(SUBSCRIBER_PACING_BYTES_PER_SEC)
+        } else {
+            None
+        };
         loop {
             debug!("Accepting");
             let stream = listener.accept_multi_fut().unwrap().await.unwrap();
             let subscriber_map = subscribers.clone();
             let stats_tx = stats_tx.clone();
+            let pacing_rate = pacing_rate;
             executor::spawn(async move {
                 let task_id = executor::get_task_id();
                 debug!("Got stream task_id={task_id} fd={}", stream.as_raw_fd());
@@ -439,7 +453,15 @@ fn main() -> anyhow::Result<()> {
                         .await;
                 } else if line.starts_with("SUBSCRIBE") {
                     let channel = line.trim()[10..].to_string();
-                    handle_subscriber(reader, writer, channel, subscriber_map, stats_tx).await;
+                    handle_subscriber(
+                        reader,
+                        writer,
+                        channel,
+                        subscriber_map,
+                        stats_tx,
+                        pacing_rate,
+                    )
+                    .await;
                 } else {
                     warn!(
                         "Line had length {} but didn't start with expected protocol fd={fd}",

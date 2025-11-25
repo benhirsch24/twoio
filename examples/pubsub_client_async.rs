@@ -397,9 +397,14 @@ fn main() -> anyhow::Result<()> {
                 let guard = connected.add();
                 debug!("Starting subscriber for {channel_name}");
                 async move {
-                    if let Err(e) =
-                        handle_subscriber(endpoint, channel_name.clone(), end, guard, subscriber_stats)
-                            .await
+                    if let Err(e) = handle_subscriber(
+                        endpoint,
+                        channel_name.clone(),
+                        end,
+                        guard,
+                        subscriber_stats,
+                    )
+                    .await
                     {
                         error!("Error on publisher {channel_name} {e}");
                     }

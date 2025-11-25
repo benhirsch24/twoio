@@ -4,6 +4,7 @@ use log::trace;
 use socket2::{Domain, Socket, Type};
 
 use std::io::Error;
+use std::mem;
 use std::net::ToSocketAddrs;
 use std::os::fd::{AsRawFd, IntoRawFd, RawFd};
 use std::pin::Pin;
@@ -189,6 +190,23 @@ impl TcpStream {
         let op = opcode::Send::new(types::Fd(self.fd), ptr, len as u32);
         let ud = add_callback(f);
         Ok(uring::submit(op.build().user_data(ud))?)
+    }
+
+    pub fn set_pacing_rate(&self, bytes_per_second: u32) -> std::io::Result<()> {
+        let rc = unsafe {
+            libc::setsockopt(
+                self.fd,
+                libc::SOL_SOCKET,
+                libc::SO_MAX_PACING_RATE,
+                &bytes_per_second as *const u32 as *const libc::c_void,
+                mem::size_of_val(&bytes_per_second) as libc::socklen_t,
+            )
+        };
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
     }
 }
 
