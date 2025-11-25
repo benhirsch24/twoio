@@ -318,7 +318,7 @@ fn main() -> anyhow::Result<()> {
             }
             Ok(())
         },
-        || {},
+        || false,
     ) {
         error!("Error running uring: {}", e);
     }

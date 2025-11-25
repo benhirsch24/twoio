@@ -260,7 +260,7 @@ fn main() -> Result<(), std::io::Error> {
             }
             Ok(())
         },
-        || {},
+        || false,
     ) {
         error!("Error running uring: {}", e);
     }

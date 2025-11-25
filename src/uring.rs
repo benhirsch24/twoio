@@ -26,6 +26,8 @@ pub struct UringStats {
     pub completions_last_period: u64,
     pub submit_and_wait: u64,
     pub to_submit_backlog: usize,
+    pub outstanding: u64,
+    pub submission_count: u64,
     pub last_submit: std::time::Instant,
     pub submit_and_wait_batch_size: Histogram,
 }
@@ -34,10 +36,12 @@ impl std::fmt::Display for UringStats {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
-            "submitted_last_period={} completions_last_period={} submit_and_wait={} last_submit={}us",
+            "submitted_last_period={} completions_last_period={} submit_and_wait={} outstanding={} submission_count={} last_submit={}us",
             self.submitted_last_period,
             self.completions_last_period,
             self.submit_and_wait,
+            self.outstanding,
+            self.submission_count,
             self.last_submit.elapsed().as_micros()
         )
     }
@@ -50,6 +54,8 @@ impl UringStats {
             completions_last_period: 0,
             submit_and_wait: 0,
             to_submit_backlog: 0,
+            outstanding: 0,
+            submission_count: 0,
             last_submit: std::time::Instant::now(),
             submit_and_wait_batch_size: Histogram::new(7, 64).expect("sawbs histo"),
         }
@@ -62,6 +68,8 @@ pub struct Uring {
     to_submit: Vec<Entry>,
     stats: UringStats,
     done: bool,
+    outstanding: u64,
+    submission_count: u64,
 }
 
 // Unsafe cell is used because we are using thread-local storage and there will be only one uring
@@ -90,7 +98,7 @@ pub fn init(args: UringArgs) -> Result<(), std::io::Error> {
 pub fn run<H, F>(handler: H, done: F) -> Result<(), anyhow::Error>
 where
     H: FnMut(u64, i32, u32) -> Result<(), anyhow::Error>,
-    F: Fn(),
+    F: FnMut() -> bool,
 {
     URING.with(|uring| unsafe {
         let uring_ref = &mut *uring.get();
@@ -111,6 +119,16 @@ pub fn submit(sqe: Entry) -> Result<(), std::io::Error> {
     Ok(())
 }
 
+pub fn submission_count() -> u64 {
+    URING.with(|uring| unsafe {
+        let uring_ref = &mut *uring.get();
+        match uring_ref.as_ref() {
+            Some(u) => u.submission_count,
+            None => 0,
+        }
+    })
+}
+
 pub fn exit() {
     URING.with(|uring| unsafe {
         let uring_ref = &mut *uring.get();
@@ -127,6 +145,8 @@ pub fn stats() -> Result<UringStats, std::io::Error> {
         let uring_mut = uring_ref.as_mut().unwrap();
         let mut stats = uring_mut.stats.clone();
         stats.to_submit_backlog = uring_mut.to_submit.len();
+        stats.outstanding = uring_mut.outstanding;
+        stats.submission_count = uring_mut.submission_count;
         uring_mut.stats = UringStats::new();
         Ok(stats)
     })
@@ -151,6 +171,8 @@ impl Uring {
             done: false,
             to_submit: Vec::new(),
             stats: UringStats::new(),
+            outstanding: 0,
+            submission_count: 0,
         })
     }
 
@@ -161,11 +183,11 @@ impl Uring {
     fn run<H, F>(
         &mut self,
         mut completion_handler: H,
-        completions_done_handler: F,
+        mut completions_done_handler: F,
     ) -> Result<(), anyhow::Error>
     where
         H: FnMut(u64, i32, u32) -> Result<(), anyhow::Error>,
-        F: Fn(),
+        F: FnMut() -> bool,
     {
         loop {
             let mut completed = 0;
@@ -175,6 +197,7 @@ impl Uring {
             for e in self.uring.completion() {
                 self.stats.completions_last_period += 1;
                 completed += 1;
+                self.outstanding = self.outstanding.saturating_sub(1);
                 trace!("completion result={} op={}", e.result(), e.user_data());
                 if let Err(err) = completion_handler(e.user_data(), e.result(), e.flags()) {
                     error!(
@@ -184,7 +207,7 @@ impl Uring {
                     );
                 }
             }
-            completions_done_handler();
+            let had_submission_activity = completions_done_handler();
 
             if self.done {
                 break;
@@ -197,7 +220,11 @@ impl Uring {
                     .to_submit
                     .drain(0..self.args.submissions_threshold)
                     .collect();
+                if batch.is_empty() {
+                    continue;
+                }
                 unsafe { self.uring.submission().push_multiple(&batch) }.expect("push multiple");
+                self.outstanding += batch.len() as u64;
                 self.uring.submit().expect("Submitted");
                 self.stats.last_submit = std::time::Instant::now();
                 self.stats.submitted_last_period += 1;
@@ -210,9 +237,17 @@ impl Uring {
             let should_sqpoll_submit = self.args.sqpoll_interval_ms > 0
                 && self.stats.last_submit.elapsed().as_millis()
                     > self.args.sqpoll_interval_ms.into();
-            if should_sqpoll_submit || completed == 0 {
+            let pending_to_submit = !self.to_submit.is_empty();
+            let has_inflight = self.outstanding > 0;
+            let should_submit_and_wait = (should_sqpoll_submit || completed == 0)
+                && (pending_to_submit || has_inflight || had_submission_activity);
+            if should_submit_and_wait {
                 let batch: Vec<io_uring::squeue::Entry> = self.to_submit.drain(..).collect();
-                unsafe { self.uring.submission().push_multiple(&batch) }.expect("push multiple");
+                if !batch.is_empty() {
+                    unsafe { self.uring.submission().push_multiple(&batch) }
+                        .expect("push multiple");
+                    self.outstanding += batch.len() as u64;
+                }
                 trace!(
                     "Submit and wait last_submit={} backlog={} batch_size={} t_diff={}",
                     self.stats.last_submit.elapsed().as_millis(),
@@ -234,5 +269,6 @@ impl Uring {
 
     fn submit(&mut self, sqe: Entry) {
         self.to_submit.push(sqe);
+        self.submission_count += 1;
     }
 }

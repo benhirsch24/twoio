@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{cell::RefCell, rc::Rc};
 
-use twoio::executor;
+use twoio::executor::{self, ExecutorConfig};
 use twoio::file::File;
 use twoio::net as unet;
 use twoio::sync::wg::{Guard, WaitGroup};
@@ -34,6 +34,10 @@ struct Args {
     /// Interval for kernel submission queue polling. If 0 then sqpoll is disabled. Default 0.
     #[arg(short = 'i', long, default_value_t = 0)]
     sqpoll_interval_ms: u32,
+
+    /// Budget in microseconds for processing the executor ready queue before yielding to io_uring (0 disables)
+    #[arg(long, default_value_t = 500)]
+    ready_queue_budget_us: u64,
 
     /// How many publishers to create
     #[arg(short, long, default_value_t = 1)]
@@ -104,6 +108,10 @@ impl SubscriberStats {
     fn record(&self, subscriber: &str) {
         let mut counts = self.received.borrow_mut();
         *counts.entry(subscriber.to_string()).or_insert(0) += 1;
+    }
+
+    fn total(&self) -> u64 {
+        self.received.borrow().values().sum()
     }
 }
 
@@ -359,7 +367,12 @@ fn main() -> anyhow::Result<()> {
         sqpoll_interval_ms: args.sqpoll_interval_ms,
     })?;
 
-    executor::init();
+    let ready_queue_budget = if args.ready_queue_budget_us == 0 {
+        None
+    } else {
+        Some(Duration::from_micros(args.ready_queue_budget_us))
+    };
+    executor::init_with_config(ExecutorConfig { ready_queue_budget });
 
     let start = Instant::now();
     let end = args.timeout + start;
@@ -488,7 +501,8 @@ fn main() -> anyhow::Result<()> {
         "Traffic totals: transmitted={}B received={}B total={}B bandwidth={:.2} {} over {:?}",
         tx_bytes, rx_bytes, total_bytes, bw_value, bw_unit, elapsed
     );
-    info!("Subscriber stats: {}", subscriber_stats);
+    debug!("Subscriber stats: {}", subscriber_stats);
+    info!("Subscriber total messages: {}", subscriber_stats.total());
 
     Ok(())
 }
