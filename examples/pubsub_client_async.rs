@@ -66,6 +66,12 @@ struct Stats {
     writes: Rc<RefCell<HashMap<String, u64>>>,
 }
 
+#[derive(Clone, Default)]
+struct TrafficTracker {
+    tx_bytes: Rc<RefCell<u64>>,
+    rx_bytes: Rc<RefCell<u64>>,
+}
+
 #[derive(Clone)]
 struct SubscriberStats {
     received: Rc<RefCell<HashMap<String, u64>>>,
@@ -98,6 +104,20 @@ impl SubscriberStats {
     fn record(&self, subscriber: &str) {
         let mut counts = self.received.borrow_mut();
         *counts.entry(subscriber.to_string()).or_insert(0) += 1;
+    }
+}
+
+impl TrafficTracker {
+    fn add_tx(&self, bytes: usize) {
+        *self.tx_bytes.borrow_mut() += bytes as u64;
+    }
+
+    fn add_rx(&self, bytes: usize) {
+        *self.rx_bytes.borrow_mut() += bytes as u64;
+    }
+
+    fn totals(&self) -> (u64, u64) {
+        (*self.tx_bytes.borrow(), *self.rx_bytes.borrow())
     }
 }
 
@@ -173,10 +193,18 @@ struct Publisher {
     channel: String,
     stats: Stats,
     message: String,
+    traffic: TrafficTracker,
 }
 
 impl Publisher {
-    fn new(tps: u32, endpoint: String, channel: String, stats: Stats, message_size: usize) -> Self {
+    fn new(
+        tps: u32,
+        endpoint: String,
+        channel: String,
+        stats: Stats,
+        message_size: usize,
+        traffic: TrafficTracker,
+    ) -> Self {
         let message_base = "bring more tacos"; // chatgpt generated 16 character quip :rolleyes:
         let repeated = message_size / message_base.len();
         let message_body = format!("{}_{}", channel, message_base.repeat(repeated));
@@ -189,6 +217,7 @@ impl Publisher {
             channel,
             stats,
             message,
+            traffic,
         }
     }
     async fn run(&mut self, guard: Guard, end: Instant) -> Result<()> {
@@ -202,11 +231,13 @@ impl Publisher {
         let publish = format!("PUBLISH {}\r\n", self.channel);
         debug!("Publish: \"{publish}\"");
         stream.write_all(publish.as_bytes()).await?;
+        self.traffic.add_tx(publish.len());
 
         // Read back the OK message we expect
         let mut ok = [0u8; 16];
         debug!("Reading ok");
-        let _ = stream.read(&mut ok).await?;
+        let read = stream.read(&mut ok).await?;
+        self.traffic.add_rx(read);
         if !ok.starts_with(b"OK\r\n") {
             return Err(std::io::Error::other("didn't get OK"));
         }
@@ -233,6 +264,7 @@ impl Publisher {
                 error!("Error writing message {}: {e}", self.message);
                 return Ok(());
             }
+            self.traffic.add_tx(self.message.len());
             self.stats.write(&self.channel);
             trace!(
                 "Wrote message {} channel={}",
@@ -259,6 +291,7 @@ async fn handle_subscriber(
     end: Instant,
     connected_guard: Guard,
     stats: SubscriberStats,
+    traffic: TrafficTracker,
 ) -> Result<()> {
     sleep_with_connect_jitter("subscriber", &channel).await?;
     let mut stream = unet::TcpStream::connect(endpoint).await?;
@@ -266,9 +299,11 @@ async fn handle_subscriber(
     drop(connected_guard);
     let subscribe = format!("SUBSCRIBE {channel}\r\n");
     stream.write_all(subscribe.as_bytes()).await?;
+    traffic.add_tx(subscribe.len());
     let mut ok = [0u8; 16];
     debug!("Reading ok");
-    let _ = stream.read(&mut ok).await?;
+    let read = stream.read(&mut ok).await?;
+    traffic.add_rx(read);
     if !ok.starts_with(b"OK\r\n") {
         return Err(std::io::Error::other("didn't get OK"));
     }
@@ -286,7 +321,12 @@ async fn handle_subscriber(
         }
 
         let mut line = String::new();
-        reader.read_line(&mut line).await?;
+        let bytes_read = reader.read_line(&mut line).await?;
+        if bytes_read == 0 {
+            info!("Subscriber {subscriber_id} hit EOF after {total_msgs} messages");
+            return Ok(());
+        }
+        traffic.add_rx(bytes_read);
         num_msgs += 1;
         total_msgs += 1;
         stats.record(&subscriber_id);
@@ -323,6 +363,7 @@ fn main() -> anyhow::Result<()> {
 
     let start = Instant::now();
     let end = args.timeout + start;
+    let traffic = TrafficTracker::default();
 
     executor::spawn(async {
         // TODO: ticker only supported as of 6.7
@@ -372,6 +413,7 @@ fn main() -> anyhow::Result<()> {
             let endpoint = args.endpoint.clone();
             let stats = stats.clone();
             let guard = connected.add();
+            let traffic = traffic.clone();
             debug!("Starting publisher for {channel_name}");
             async move {
                 let _g = g;
@@ -381,6 +423,7 @@ fn main() -> anyhow::Result<()> {
                     channel_name.clone(),
                     stats,
                     args.message_size,
+                    traffic,
                 );
                 if let Err(e) = publisher.run(guard, end).await {
                     error!("Error on publisher {channel_name} {e}");
@@ -395,6 +438,7 @@ fn main() -> anyhow::Result<()> {
                 let endpoint = args.endpoint.clone();
                 let subscriber_stats = subscriber_stats.clone();
                 let guard = connected.add();
+                let traffic = traffic.clone();
                 debug!("Starting subscriber for {channel_name}");
                 async move {
                     if let Err(e) = handle_subscriber(
@@ -403,6 +447,7 @@ fn main() -> anyhow::Result<()> {
                         end,
                         guard,
                         subscriber_stats,
+                        traffic,
                     )
                     .await
                     {
@@ -426,6 +471,23 @@ fn main() -> anyhow::Result<()> {
 
     executor::run();
 
+    let elapsed = start.elapsed();
+    let (tx_bytes, rx_bytes) = traffic.totals();
+    let total_bytes = tx_bytes + rx_bytes;
+    let bits_per_second = if elapsed.as_secs_f64() > 0.0 {
+        (total_bytes as f64 * 8.0) / elapsed.as_secs_f64()
+    } else {
+        0.0
+    };
+    let (bw_value, bw_unit) = if bits_per_second >= 1_000_000.0 {
+        (bits_per_second / 1_000_000.0, "Mbps")
+    } else {
+        (bits_per_second, "bps")
+    };
+    info!(
+        "Traffic totals: transmitted={}B received={}B total={}B bandwidth={:.2} {} over {:?}",
+        tx_bytes, rx_bytes, total_bytes, bw_value, bw_unit, elapsed
+    );
     info!("Subscriber stats: {}", subscriber_stats);
 
     Ok(())
