@@ -16,8 +16,8 @@ use std::{cell::RefCell, rc::Rc};
 use twoio::executor;
 use twoio::file::File;
 use twoio::net as unet;
-use twoio::sync::wg::WaitGroup;
-use twoio::timeout::{sleep_for, ticker};
+use twoio::sync::wg::{Guard, WaitGroup};
+use twoio::timeout::sleep_for;
 use twoio::uring;
 
 #[derive(Parser, Debug)]
@@ -101,6 +101,21 @@ impl SubscriberStats {
     }
 }
 
+fn connect_jitter_ms() -> u64 {
+    let mut rng = rand::rng();
+    rng.random_range(10..100)
+}
+
+async fn sleep_with_connect_jitter(role: &str, channel: &str) -> Result<()> {
+    let jitter_ms = connect_jitter_ms();
+    debug!(
+        "Applying {}ms connect jitter for {role} channel={channel}",
+        jitter_ms
+    );
+    sleep_for(Duration::from_millis(jitter_ms)).await?;
+    Ok(())
+}
+
 impl std::fmt::Display for Stats {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let mut total = 0;
@@ -176,10 +191,12 @@ impl Publisher {
             message,
         }
     }
-    async fn run(&mut self, end: Instant) -> Result<()> {
-        info!("Connecting task={}", executor::get_task_id());
+    async fn run(&mut self, guard: Guard, end: Instant) -> Result<()> {
+        debug!("Connecting task={}", executor::get_task_id());
+        sleep_with_connect_jitter("publisher", &self.channel).await?;
         let mut stream = unet::TcpStream::connect(self.endpoint.clone()).await?;
-        info!("Connected publisher {}", self.channel);
+        debug!("Connected publisher {}", self.channel);
+        drop(guard);
 
         // Inform the server that we're a publisher
         let publish = format!("PUBLISH {}\r\n", self.channel);
@@ -240,10 +257,13 @@ async fn handle_subscriber(
     endpoint: String,
     channel: String,
     end: Instant,
+    connected_guard: Guard,
     stats: SubscriberStats,
 ) -> Result<()> {
+    sleep_with_connect_jitter("subscriber", &channel).await?;
     let mut stream = unet::TcpStream::connect(endpoint).await?;
-    info!("Connected subscriber {channel} fd={}", stream.as_raw_fd());
+    debug!("Connected subscriber {channel} fd={}", stream.as_raw_fd());
+    drop(connected_guard);
     let subscribe = format!("SUBSCRIBE {channel}\r\n");
     stream.write_all(subscribe.as_bytes()).await?;
     let mut ok = [0u8; 16];
@@ -305,9 +325,10 @@ fn main() -> anyhow::Result<()> {
     let end = args.timeout + start;
 
     executor::spawn(async {
-        let mut timeout = ticker(Duration::from_secs(5));
+        // TODO: ticker only supported as of 6.7
+        //let mut timeout = ticker(Duration::from_secs(5));
         loop {
-            timeout = timeout.await.expect("REASON");
+            let _ = sleep_for(Duration::from_secs(5)).await.expect("REASON");
             let stats = uring::stats().expect("stats");
             info!("Metrics: {}", stats);
         }
@@ -337,6 +358,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut rng = rand::rng();
     let mut wg = WaitGroup::default();
+    let mut connected = WaitGroup::default();
     for n in 0..args.publishers {
         let channel_name = format!("Channel_{n}");
         // Add some jitter here for ramp up
@@ -349,6 +371,7 @@ fn main() -> anyhow::Result<()> {
             let channel_name = channel_name.clone();
             let endpoint = args.endpoint.clone();
             let stats = stats.clone();
+            let guard = connected.add();
             debug!("Starting publisher for {channel_name}");
             async move {
                 let _g = g;
@@ -359,7 +382,7 @@ fn main() -> anyhow::Result<()> {
                     stats,
                     args.message_size,
                 );
-                if let Err(e) = publisher.run(end).await {
+                if let Err(e) = publisher.run(guard, end).await {
                     error!("Error on publisher {channel_name} {e}");
                 }
             }
@@ -371,10 +394,11 @@ fn main() -> anyhow::Result<()> {
                 let channel_name = channel_name.clone();
                 let endpoint = args.endpoint.clone();
                 let subscriber_stats = subscriber_stats.clone();
+                let guard = connected.add();
                 debug!("Starting subscriber for {channel_name}");
                 async move {
                     if let Err(e) =
-                        handle_subscriber(endpoint, channel_name.clone(), end, subscriber_stats)
+                        handle_subscriber(endpoint, channel_name.clone(), end, guard, subscriber_stats)
                             .await
                     {
                         error!("Error on publisher {channel_name} {e}");
@@ -383,6 +407,11 @@ fn main() -> anyhow::Result<()> {
             });
         }
     }
+
+    executor::spawn(async move {
+        connected.wait().await;
+        info!("All publishers and subscribers connected");
+    });
 
     executor::spawn(async move {
         wg.wait().await;

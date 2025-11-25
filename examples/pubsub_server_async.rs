@@ -10,6 +10,7 @@ use std::{cell::RefCell, rc::Rc};
 use twoio::executor;
 use twoio::net as unet;
 use twoio::sync::mpsc;
+use twoio::timeout::sleep_for;
 use twoio::uring;
 
 static OK: &[u8] = b"OK\r\n";
@@ -249,7 +250,9 @@ async fn handle_publisher(
                 }
             }
             Err(e) => {
-                error!("Got error {e}");
+                if e.kind() != std::io::ErrorKind::ConnectionReset {
+                    error!("Got error {e}");
+                }
                 return;
             }
         }
@@ -324,7 +327,9 @@ async fn handle_subscriber(
                 }
             }
             Err(e) => {
-                error!("Got error {e}");
+                if e.kind() != std::io::ErrorKind::ConnectionReset {
+                    error!("Got error {e}");
+                }
                 if let Some(channel_id) = subscribers.remove_subscriber(&channel, subscriber_fd) {
                     let _ = stats_tx.send(StatEvent::ChannelRemoved { channel_id });
                 }
@@ -376,9 +381,8 @@ fn main() -> anyhow::Result<()> {
     executor::spawn({
         let stats_map = stats_map.clone();
         async move {
-            let mut timeout = twoio::timeout::ticker(Duration::from_secs(5));
             loop {
-                timeout = timeout.await.expect("REASON");
+                let _ = sleep_for(Duration::from_secs(5)).await.expect("REASON");
                 let stats = uring::stats().expect("stats");
                 info!("Uring metrics: {}", stats);
 
@@ -386,7 +390,7 @@ fn main() -> anyhow::Result<()> {
                 let mut to_remove = Vec::new();
                 for (channel_id, snapshot) in stats_map.collect_and_reset() {
                     if snapshot.active || snapshot.sent > 0 {
-                        info!("{} sent {}", snapshot.name, snapshot.sent);
+                        debug!("{} sent {}", snapshot.name, snapshot.sent);
                     }
                     if !snapshot.active && snapshot.sent == 0 {
                         to_remove.push(channel_id);
