@@ -1,6 +1,7 @@
 use futures::{AsyncRead, AsyncWrite};
 use io_uring::{opcode, types};
 use log::trace;
+use net2::unix::UnixTcpBuilderExt;
 use socket2::{Domain, Socket, Type};
 
 use std::io::Error;
@@ -21,10 +22,10 @@ pub struct TcpListener {
 
 impl TcpListener {
     pub fn bind<A: ToSocketAddrs>(addr: A) -> std::io::Result<TcpListener> {
-        let l = net2::TcpBuilder::new_v4()?
-            .reuse_address(true)?
-            .bind(&addr)?
-            .listen(1024)?;
+        let builder = net2::TcpBuilder::new_v4()?;
+        builder.reuse_address(true)?;
+        builder.reuse_port(true)?;
+        let l = builder.bind(&addr)?.listen(1024)?;
         Ok(TcpListener {
             l,
             accept_multi_op: None,
