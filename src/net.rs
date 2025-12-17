@@ -1,5 +1,5 @@
 use futures::{AsyncRead, AsyncWrite};
-use io_uring::{opcode, types};
+use io_uring::{cqueue, opcode, types};
 use log::trace;
 use net2::unix::UnixTcpBuilderExt;
 use socket2::{Domain, Socket, Type};
@@ -209,6 +209,18 @@ impl TcpStream {
             Err(std::io::Error::last_os_error())
         }
     }
+
+    pub fn sendzc<'a>(&mut self, buf: &'a [u8]) -> TcpStreamSendZc<'a> {
+        if self.write_op_id.is_some() {
+            panic!("One write op at a time please");
+        }
+
+        TcpStreamSendZc {
+            buf,
+            fd: self.fd,
+            op_id: None,
+        }
+    }
 }
 
 impl AsyncRead for TcpStream {
@@ -348,6 +360,53 @@ impl AsyncWrite for TcpStream {
         executor::schedule_completion(op_id, false);
         uring::submit(op.build().user_data(op_id)).expect("submit close");
 
+        Poll::Pending
+    }
+}
+
+pub struct TcpStreamSendZc<'a> {
+    buf: &'a [u8],
+    fd: RawFd,
+    op_id: Option<u64>,
+}
+
+impl<'a> Future for TcpStreamSendZc<'a> {
+    type Output = std::io::Result<usize>;
+
+    fn poll(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut me = self.as_mut();
+        let task_id = executor::get_task_id();
+        let fd = me.fd;
+
+        if let Some(op_id) = me.op_id {
+            trace!("Polling sendzc op_id={op_id} task_id={task_id} fd={fd}");
+            return match executor::get_result(op_id) {
+                None => Poll::Pending,
+                Some((res, flags)) => {
+                    if res < 0 {
+                        Poll::Ready(Err(std::io::Error::from_raw_os_error(-res)))
+                    } else if !cqueue::more(flags) && cqueue::notif(flags) {
+                        trace!("Sendzc no more op_id={op_id} task_id={task_id} fd={fd}");
+                        Poll::Ready(Ok(self.buf.len()))
+                    } else {
+                        trace!("Sendzc there is more op_id={op_id} task_id={task_id} fd={fd}");
+                        Poll::Pending
+                    }
+                }
+            };
+        }
+
+        let op_id = executor::get_next_op_id();
+        me.op_id = Some(op_id);
+        let ptr = me.buf.as_ptr();
+        let len = me.buf.len() as u32;
+        let op = opcode::SendZc::new(types::Fd(me.fd), ptr, len);
+        trace!(
+            "Scheduling sendzc completion for op={op_id} fd={}, task_id={task_id}, len={len}",
+            me.fd
+        );
+        executor::schedule_completion(op_id, true);
+        uring::submit(op.build().user_data(op_id)).expect("sendzc submit");
         Poll::Pending
     }
 }

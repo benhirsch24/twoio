@@ -301,7 +301,7 @@ async fn handle_subscriber(
                 let fut = { rx.borrow_mut().recv() };
                 match fut.await {
                     Some(msg) => {
-                        if let Err(e) = writer.write_all(msg.as_bytes()).await {
+                        if let Err(e) = writer.sendzc(msg.as_ref().as_ref()).await {
                             error!(
                                 "Failed to write line to channel={channel} fd={fd} task_id={task_id}: {e}"
                             );

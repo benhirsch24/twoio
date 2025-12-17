@@ -92,7 +92,11 @@ impl ExecutorInner<'_> {
         Ok(())
     }
 
+    // Returns true if there has been at least one IO op submitted
     fn handle_ready_queue(&mut self) -> bool {
+        if self.ready_queue.is_empty() {
+            return false;
+        }
         // Handle tasks in the ready queue until there's no more.
         // This is because tasks may depend on other tasks finishing without IO being involved.
         // Otherwise we have to wait for IO to come back from uring.
@@ -141,6 +145,9 @@ impl ExecutorInner<'_> {
                     }
                 }
                 idx += 1;
+
+                // If we've surpassed our time budget for handling tasks put the remaining tasks
+                // back on the queue
                 if let Some(budget) = ready_queue_budget {
                     if ready_queue_start.elapsed() >= budget {
                         trace!(
@@ -221,6 +228,12 @@ impl ExecutorInner<'_> {
         let task_id = get_task_id();
         self.op_to_task.insert(op, (task_id, is_multi));
         trace!("scheduled completion op_id={op} task_id={task_id}");
+    }
+
+    fn remove_multi(&mut self, op: u64) {
+        let task_id = get_task_id();
+        let _ = self.op_to_task.remove(&op);
+        trace!("removed multi completion op_id={op} task_id={task_id}");
     }
 }
 
@@ -330,6 +343,13 @@ pub fn schedule_completion(op_id: u64, is_multi: bool) {
     EXECUTOR.with(|exe| unsafe {
         let exe = &mut *exe.get();
         exe.as_mut().unwrap().schedule_completion(op_id, is_multi)
+    })
+}
+
+pub fn remove_multi(op_id: u64) {
+    EXECUTOR.with(|exe| unsafe {
+        let exe = &mut *exe.get();
+        exe.as_mut().unwrap().remove_multi(op_id)
     })
 }
 
