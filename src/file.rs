@@ -80,7 +80,7 @@ impl Future for OpenFuture {
 
         match me.op_id {
             Some(op_id) => match executor::get_result(op_id) {
-                Some(res) => {
+                Some((res, _flags)) => {
                     me.op_id = None;
                     me.done = true;
                     trace!("Got open result {res} op={op_id}");
@@ -116,7 +116,7 @@ impl AsyncRead for File {
         if let Some(op_id) = me.read_op_id {
             trace!("Read polling op_id={op_id} task_id={task_id} fd={fd}");
             return match executor::get_result(op_id) {
-                Some(res) => {
+                Some((res, _flags)) => {
                     me.read_op_id = None;
                     trace!("Got read result {res} op_id={op_id} task_id={task_id} fd={fd}");
                     if res < 0 {
@@ -162,7 +162,7 @@ impl AsyncWrite for File {
         if let Some(op_id) = me.write_op_id {
             trace!("Write polling op_id={op_id} task_id={task_id} fd={fd}");
             return match executor::get_result(op_id) {
-                Some(res) => {
+                Some((res, _flags)) => {
                     me.write_op_id = None;
                     trace!("Got write result {res} op_id={op_id} task_id={task_id} fd={fd}");
                     if res < 0 {
@@ -209,7 +209,7 @@ impl AsyncWrite for File {
 
         if let Some(op_id) = me.close_op_id {
             return match executor::get_result(op_id) {
-                Some(res) => {
+                Some((res, _flags)) => {
                     if res < 0 {
                         Poll::Ready(Err(std::io::Error::from_raw_os_error(-res)))
                     } else {

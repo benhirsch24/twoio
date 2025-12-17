@@ -12,8 +12,8 @@ use log::{trace, warn};
 use crate::uring;
 
 struct ExecutorInner<'a> {
-    results: HashMap<u64, i32>,
-    multi_results: HashMap<u64, Vec<i32>>,
+    results: HashMap<u64, (i32, u32)>,
+    multi_results: HashMap<u64, Vec<(i32, u32)>>,
     tasks: HashMap<u64, LocalBoxFuture<'a, ()>>,
     op_to_task: HashMap<u64, (u64, bool)>,
     next_task_id: u64,
@@ -74,7 +74,7 @@ impl ExecutorInner<'_> {
         self.timers.remove(&timer_id);
     }
 
-    fn handle_completion(&mut self, op: u64, res: i32, _flags: u32) -> Result<(), anyhow::Error> {
+    fn handle_completion(&mut self, op: u64, res: i32, flags: u32) -> Result<(), anyhow::Error> {
         if !self.op_to_task.contains_key(&op) {
             warn!("No op to task {op}");
             anyhow::bail!("No completion {op}");
@@ -83,10 +83,11 @@ impl ExecutorInner<'_> {
         let (task_id, is_multi) = self.op_to_task.get(&op).copied().unwrap();
         trace!("handle_completion op={op} res={res} task_id={task_id} is_multi={is_multi}");
         self.wake(task_id);
+        let result = (res, flags);
         if !is_multi {
-            self.results.insert(op, res);
+            self.results.insert(op, result);
         } else {
-            self.multi_results.entry(op).or_default().push(res);
+            self.multi_results.entry(op).or_default().push(result);
         }
         Ok(())
     }
@@ -179,7 +180,7 @@ impl ExecutorInner<'_> {
         task
     }
 
-    fn get_result(&mut self, op: u64) -> Option<i32> {
+    fn get_result(&mut self, op: u64) -> Option<(i32, u32)> {
         if !self.op_to_task.contains_key(&op) {
             warn!("No task for op={op}");
             return None;
@@ -318,7 +319,7 @@ pub fn get_next_op_id() -> u64 {
     })
 }
 
-pub fn get_result(op_id: u64) -> Option<i32> {
+pub fn get_result(op_id: u64) -> Option<(i32, u32)> {
     EXECUTOR.with(|exe| unsafe {
         let exe = &mut *exe.get();
         exe.as_mut().unwrap().get_result(op_id)
@@ -385,7 +386,7 @@ mod tests {
         fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
             let me = self.as_ref();
             match executor::get_result(me.id) {
-                Some(res) => {
+                Some((res, _flags)) => {
                     println!("Got result {res}");
                     Poll::Ready(())
                 }

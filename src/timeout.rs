@@ -66,7 +66,7 @@ impl Future for TimeoutFuture {
             return Poll::Ready(Err(std::io::Error::other("Timer already expired")));
         }
         match executor::get_result(op_id) {
-            Some(res) => {
+            Some((res, _flags)) => {
                 trace!("Timeout done res={res} op_id={op_id} task_id={task_id}");
                 if !me.repeated {
                     executor::unregister_timer(me.timer_id);

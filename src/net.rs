@@ -75,7 +75,7 @@ impl Future for AcceptFuture {
     fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
         let me = self.as_ref();
         match executor::get_result(me.op_id) {
-            Some(res) => {
+            Some((res, _flags)) => {
                 trace!("Accepted result={res} op={}", me.op_id);
                 if res < 0 {
                     Poll::Ready(Err(std::io::Error::from_raw_os_error(-res)))
@@ -106,7 +106,7 @@ impl Future for ConnectFuture {
 
         match me.op_id {
             Some(op_id) => match executor::get_result(op_id) {
-                Some(res) => {
+                Some((res, _flags)) => {
                     me.op_id = None;
                     me.done = true;
                     trace!("Got connect result {res} op={op_id}");
@@ -226,7 +226,7 @@ impl AsyncRead for TcpStream {
             let op_id = me.read_op_id.unwrap();
             trace!("Recv polling op_id={op_id} task_id={task_id} fd={fd}");
             return match executor::get_result(op_id) {
-                Some(res) => {
+                Some((res, _flags)) => {
                     me.read_op_id = None;
                     trace!("Got recv result {res}  op_id={op_id} task_id={task_id} fd={fd}");
                     if res < 0 {
@@ -278,7 +278,7 @@ impl AsyncWrite for TcpStream {
             let op_id = me.write_op_id.unwrap();
             trace!("Write polling op_id={op_id} task_id={task_id} fd={fd}");
             return match executor::get_result(op_id) {
-                Some(res) => {
+                Some((res, _flags)) => {
                     me.write_op_id = None;
                     trace!("Got write result {res} op_id={op_id} task_id={task_id} fd={fd}");
                     if res < 0 {
@@ -326,7 +326,7 @@ impl AsyncWrite for TcpStream {
         if me.close_op_id.is_some() {
             let op_id = me.close_op_id.unwrap();
             return match executor::get_result(op_id) {
-                Some(res) => {
+                Some((res, _flags)) => {
                     if res < 0 {
                         Poll::Ready(Err(std::io::Error::from_raw_os_error(-res)))
                     } else {
